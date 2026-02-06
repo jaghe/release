@@ -1,0 +1,57 @@
+name: getup
+on:
+  schedule:
+    - cron:  '0 14 * * *'
+  workflow_dispatch:
+  
+jobs:
+  getup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check
+        run: |
+         UPSTREAM=$(git ls-remote --tag --sort=-v:refname https://github.com/${{ secrets.REPO }} | head -1 | cut -f 2 | grep -o "[^/]*$")
+         CURRENT=$(git ls-remote --tag --sort=-v:refname https://github.com/${{ github.repository }} | head -1 | cut -f 2 | grep -o "[^/]*$")
+         
+         if [[ ${CURRENT} == ${UPSTREAM} ]]; 
+         then exit 0;
+         else
+         
+         all_releases_list="josn_api_releases"
+         response="$(
+            curl -s -L \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${{ secrets.TOKEN }}" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=1&page=1"
+            )"
+         echo "${response}" |
+             jq -s '.[] | sort_by(.published_at)|reverse' |
+             jq -c '.[] | {date: .published_at, id: .id, prerelease: .prerelease, tag_name: .tag_name}' \
+                >${all_releases_list}
+         release_id="$(cat ${all_releases_list} | jq -r .id)"
+         tag_name="$(cat ${all_releases_list} | jq -r .tag_name)"
+         curl -s \
+             -X DELETE \
+             -H "Accept: application/vnd.github+json" \
+             -H "Authorization: Bearer ${{ secrets.TOKEN }}" \
+             -H "X-GitHub-Api-Version: 2022-11-28" \
+             https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/${release_id} \
+             https://api.github.com/repos/${GITHUB_REPOSITORY}/git/refs/tags/${tag_name}
+         
+         rm -rf *
+         mkdir -p .github/workflows
+         wget -qO .github/workflows/getup.yml https://github.com/${{ github.repository }}/raw/master/.github/workflows/getup.yml &> /dev/null
+         wget -qO .github/workflows/release.yml https://github.com/${{ github.repository }}/raw/master/.github/workflows/release.yml &> /dev/null
+         #git ls-remote --tag --sort=-v:refname https://github.com/${{ secrets.REPO }} | head -1 | cut -f 2 | grep -o "[^/]*$" | sed -e "s/.*/         CURRENT=&/" | sed -i '14r/dev/stdin' .github/workflows/getup.yml && sed -i '14d' .github/workflows/getup.yml
+         git config --global init.defaultBranch master
+         git init
+         git add .
+         git config user.name "${GITHUB_ACTOR}"
+         git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+         git commit -m "${UPSTREAM}"
+         git remote add origin "https://${{ github.actor }}:${{ secrets.TOKEN }}@github.com/${{ github.repository }}"
+         git push origin master --force
+         git tag "${UPSTREAM}"
+         git push origin "${UPSTREAM}" --force;
+         fi
